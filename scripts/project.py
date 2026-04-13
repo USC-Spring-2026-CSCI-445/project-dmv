@@ -170,6 +170,13 @@ class PFRRTController:
         for z, a in measurements:
             self._pf.measure(z, a)
 
+    # Helper
+    def _pf_converged(self, std_threshold: float = 0.15) -> bool:
+        """Return True when the particle cloud is tight enough."""
+        xs = [p.x for p in self._pf._particles]
+        ys = [p.y for p in self._pf._particles]
+        return np.std(xs) < std_threshold and np.std(ys) < std_threshold
+
     # ----------------------------------------------------------------------
     # Phase 1: Localization with PF (explore a bit)
     # ----------------------------------------------------------------------
@@ -182,7 +189,53 @@ class PFRRTController:
         """
         
         ######### Your code starts here #########
-
+        FRONT_CLEARANCE = 0.55
+        FORWARD_DIST   = 0.4
+        RANDOM_TURN_PROB = 0.10
+ 
+        rate = rospy.Rate(10)
+ 
+        for step in range(max_steps):
+            if rospy.is_shutdown():
+                break
+ 
+            if self._pf_converged():
+                rospy.loginfo(f"PF converged after {step} steps.")
+                break
+ 
+            xs = [p.x for p in self._pf._particles]
+            ys = [p.y for p in self._pf._particles]
+            rospy.loginfo(f"[PF] step {step:3d} | std_x={np.std(xs):.3f}  std_y={np.std(ys):.3f}")
+ 
+            front_dist = inf
+            if self.laserscan is not None:
+                n = len(self.laserscan.ranges)
+                front_idx = int((0.0 - self.laserscan.angle_min) / self.laserscan.angle_increment)
+                front_idx = max(0, min(n - 1, front_idx))
+                fd = self.laserscan.ranges[front_idx]
+                if not (math.isnan(fd) or math.isinf(fd)):
+                    front_dist = fd
+ 
+            if front_dist < FRONT_CLEARANCE:
+                turn = np.random.choice([pi / 2.0, -pi / 2.0])
+                rospy.loginfo(f"  Wall ahead ({front_dist:.2f} m). Rotating {math.degrees(turn):.0f}")
+                self.rotate_in_place(turn)
+            elif np.random.rand() < RANDOM_TURN_PROB:
+                turn = np.random.choice([pi / 2.0, -pi / 2.0])
+                rospy.loginfo(f"  Random turn {math.degrees(turn):.0f}°")
+                self.rotate_in_place(turn)
+            else:
+                self.move_forward(FORWARD_DIST)
+ 
+            self.take_measurements()
+            rate.sleep()
+ 
+        self._stop()
+ 
+        est_x, est_y, est_theta = self._pf.get_estimate()
+        rospy.loginfo(
+            f"PF estimate: x={est_x:.3f}  y={est_y:.3f}  θ={math.degrees(est_theta):.1f}"
+        )
         ######### Your code ends here #########
 
         
@@ -195,7 +248,30 @@ class PFRRTController:
         Generate a path using RRT from PF-estimated start to known goal.
         """
         ######### Your code starts here #########
-
+        est_x, est_y, est_theta = self._pf.get_estimate()
+        start_position = {"x": est_x, "y": est_y, "theta": est_theta}
+ 
+        rospy.loginfo(
+            f"Planning from ({est_x:.3f}, {est_y:.3f}) → "
+            f"({self.goal_position['x']:.3f}, {self.goal_position['y']:.3f})"
+        )
+ 
+        MAX_ATTEMPTS = 5
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            plan, graph = self._planner.generate_plan(start_position, self.goal_position)
+ 
+            if plan:
+                rospy.loginfo(f"  RRT succeeded on attempt {attempt} ({len(plan)} waypoints).")
+                self.plan = plan
+                self._planner.visualize_plan(plan)
+                self._planner.visualize_graph(graph)
+                return
+ 
+            rospy.logwarn(f"  RRT attempt {attempt} failed — retrying…")
+ 
+        raise RuntimeError(
+            "RRT could not find a path."
+        )
         ######### Your code ends here #########
 
     # ----------------------------------------------------------------------
@@ -207,7 +283,64 @@ class PFRRTController:
         Keep updating PF along the way.
         """
         ######### Your code starts here #########
-
+        if not self.plan:
+            rospy.logerr("follow_plan called but self.plan is empty.")
+            return
+ 
+        rate = rospy.Rate(20)
+        ctrl_msg = Twist()
+        current_wp_idx = 0
+        PF_UPDATE_INTERVAL = 10
+        tick = 0
+ 
+        while not rospy.is_shutdown():
+ 
+            if self.current_position is None:
+                rate.sleep()
+                continue
+ 
+            if current_wp_idx >= len(self.plan):
+                rospy.loginfo("All waypoints reached — stopping.")
+                self._stop()
+                break
+ 
+            goal = self.plan[current_wp_idx]
+ 
+            dx = goal["x"] - self.current_position["x"]
+            dy = goal["y"] - self.current_position["y"]
+            distance_error = sqrt(dx ** 2 + dy ** 2)
+ 
+            target_theta = atan2(dy, dx)
+            angle_error = angle_to_neg_pi_to_pi(
+                target_theta - self.current_position["theta"]
+            )
+ 
+            t = rospy.get_time()
+ 
+            linear_vel = self.linear_pid.control(distance_error, t)
+            angular_vel = self.angular_pid.control(angle_error, t)
+ 
+            if abs(angle_error) > 0.5:
+                linear_vel = 0.0
+ 
+            ctrl_msg.linear.x = linear_vel
+            ctrl_msg.angular.z = angular_vel
+            self.cmd_pub.publish(ctrl_msg)
+ 
+            if distance_error < GOAL_THRESHOLD:
+                rospy.loginfo(
+                    f"  Reached waypoint {current_wp_idx + 1}/{len(self.plan)}"
+                    f" ({goal['x']:.3f}, {goal['y']:.3f})"
+                )
+                current_wp_idx += 1
+ 
+            tick += 1
+            if tick % PF_UPDATE_INTERVAL == 0:
+                self.take_measurements()
+ 
+            rate.sleep()
+ 
+        self._stop()
         ######### Your code ends here #########
 
     # ----------------------------------------------------------------------
