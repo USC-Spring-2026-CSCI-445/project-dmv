@@ -282,6 +282,33 @@ class ParticleFilter:
             spawned += 1
         ######### Your code ends here #########
 
+    def _path_crosses_obstacle(
+        self, x1: float, y1: float, x2: float, y2: float
+    ) -> bool:
+        """Returns True if the straight-line path from (x1,y1) to (x2,y2) crosses any obstacle wall."""
+        dx = x2 - x1
+        dy = y2 - y1
+        dist = math.sqrt(dx**2 + dy**2)
+        if dist < 1e-6:
+            return False
+        angle = math.atan2(dy, dx)
+        for obs in self._map.obstacles:
+            x_min, x_max, y_min, y_max = obs
+            walls = [
+                [(x_min, y_min), (x_max, y_min)],
+                [(x_max, y_min), (x_max, y_max)],
+                [(x_max, y_max), (x_min, y_max)],
+                [(x_min, y_max), (x_min, y_min)],
+            ]
+            for wall in walls:
+                result = ray_line_intersection((x1, y1), angle, wall[0], wall[1])
+                if result is not None:
+                    hit = result[0]
+                    hit_dist = np.linalg.norm(np.array(hit) - np.array([x1, y1]))
+                    if hit_dist <= dist + 1e-6:
+                        return True
+        return False
+
     def visualize_particles(self):
         pa = PoseArray()
         pa.header.frame_id = "odom"
@@ -323,18 +350,33 @@ class ParticleFilter:
         delta_dist = math.sqrt(delta_x**2 + delta_y**2)
 
         for particle in self._particles:
-            # Add rotation noise first
             noisy_theta = angle_to_neg_pi_to_pi(
                 particle.theta
                 + delta_theta
                 + np.random.normal(0, self.rotation_variance)
             )
 
-            # Then move in that direction
             if delta_dist > 1e-6:
                 noisy_dist = delta_dist + np.random.normal(0, self.translation_variance)
-                particle.x += noisy_dist * math.cos(noisy_theta)
-                particle.y += noisy_dist * math.sin(noisy_theta)
+                new_x = particle.x + noisy_dist * math.cos(noisy_theta)
+                new_y = particle.y + noisy_dist * math.sin(noisy_theta)
+
+                # ---- NEW: Penalize impossible moves ----
+                if self._path_crosses_obstacle(
+                    particle.x, particle.y, new_x, new_y
+                ) or self._is_invalid_position(new_x, new_y):
+
+                    # The real robot moved, but this hypothesis hit a wall.
+                    # Heavily penalize this particle so it dies in resampling.
+                    particle.log_p += -1e6
+
+                    # You can safely skip updating its coordinates.
+                    # It's virtually dead anyway.
+                    continue
+                # ----------------------------------------
+
+                particle.x = new_x
+                particle.y = new_y
 
             particle.theta = noisy_theta
 
@@ -550,7 +592,7 @@ class Controller:
         # Spread across front hemisphere so each reading gives orthogonal
         # positional evidence. Clustered-front angles (e.g. -15/0/15) are
         # highly correlated and barely help disambiguate location.
-        selected_angles = [-90, -45, 0, 45, 90]
+        selected_angles = [-135, -90, -45, 0, 45, 90, 135, 180]
 
         for angle_deg in selected_angles:
             angle_rad = math.radians(angle_deg)
@@ -721,8 +763,8 @@ if __name__ == "__main__":
 
     map_ = Map(obstacles, map_aabb)
     num_particles = 200
-    translation_variance = 0.1
-    rotation_variance = 0.05
+    translation_variance = 0.003
+    rotation_variance = 0.03
     measurement_variance = 0.1
     particle_filter = ParticleFilter(
         map_,
