@@ -358,8 +358,9 @@ class ParticleFilter:
 
             if delta_dist > 1e-6:
                 noisy_dist = delta_dist + np.random.normal(0, self.translation_variance)
-                new_x = particle.x + noisy_dist * math.cos(noisy_theta)
-                new_y = particle.y + noisy_dist * math.sin(noisy_theta)
+                travel_angle = particle.theta + np.random.normal(0, self.rotation_variance / 2)
+                new_x = particle.x + noisy_dist * math.cos(travel_angle)
+                new_y = particle.y + noisy_dist * math.sin(travel_angle)
 
                 # ---- NEW: Penalize impossible moves ----
                 if self._path_crosses_obstacle(
@@ -369,6 +370,7 @@ class ParticleFilter:
                     # The real robot moved, but this hypothesis hit a wall.
                     # Heavily penalize this particle so it dies in resampling.
                     particle.log_p += -1e6
+                    particle.theta = noisy_theta
 
                     # You can safely skip updating its coordinates.
                     # It's virtually dead anyway.
@@ -592,7 +594,7 @@ class Controller:
         # Spread across front hemisphere so each reading gives orthogonal
         # positional evidence. Clustered-front angles (e.g. -15/0/15) are
         # highly correlated and barely help disambiguate location.
-        selected_angles = [-135, -90, -45, 0, 45, 90, 135, 180]
+        selected_angles = [-90, -45, 0, 45, 90]
 
         for angle_deg in selected_angles:
             angle_rad = math.radians(angle_deg)
@@ -626,8 +628,10 @@ class Controller:
         # Robot autonomously explores environment while it localizes itself
         ######### Your code starts here #########
         rate = rospy.Rate(10)
-        CONFIDENCE_THRESHOLD = 0.15
-        RANDOM_TURN_PROB = 0.05
+        CONFIDENCE_THRESHOLD = 0.1
+        RANDOM_TURN_PROB = 0.1
+        MAX_CONVERGENCES = 3
+        convergence_count = 0
 
         while not rospy.is_shutdown():
 
@@ -637,11 +641,34 @@ class Controller:
             std_x = np.std(particles_x)
             std_y = np.std(particles_y)
 
-            rospy.loginfo(f"Spread - X: {std_x:.3f}, Y: {std_y:.3f}")
+            rospy.loginfo(f"Spread - X: {std_x:.3f}, Y: {std_y:.3f} | Convergences: {convergence_count}/{MAX_CONVERGENCES}")
 
             if std_x < CONFIDENCE_THRESHOLD and std_y < CONFIDENCE_THRESHOLD:
-                rospy.loginfo("Localization converged!")
-                break
+                convergence_count += 1
+                rospy.loginfo(f"Localization converged! ({convergence_count}/{MAX_CONVERGENCES})")
+
+                if convergence_count >= MAX_CONVERGENCES:
+                    rospy.loginfo("Localization complete!")
+                    break
+
+                # Reinitialize particles uniformly so the filter tries again
+                # from scratch. The robot has moved, so the new sensor context
+                # gives a fresh chance to land on the true position.
+                rospy.loginfo("Reinitializing particles for next convergence attempt...")
+                x_min, x_max = self._particle_filter._map.map_aabb[0], self._particle_filter._map.map_aabb[1]
+                y_min, y_max = self._particle_filter._map.map_aabb[2], self._particle_filter._map.map_aabb[3]
+                new_particles = []
+                spawned = 0
+                while spawned < self._particle_filter.n_particles:
+                    x = uniform(x_min, x_max)
+                    y = uniform(y_min, y_max)
+                    if self._particle_filter._is_invalid_position(x, y):
+                        continue
+                    theta = uniform(-pi, pi)
+                    new_particles.append(Particle(x, y, theta, 0.0))
+                    spawned += 1
+                self._particle_filter._particles = new_particles
+                self._particle_filter.visualize_particles()
 
             front_idx = int(
                 (0.0 - self.laserscan.angle_min) / self.laserscan.angle_increment
@@ -650,7 +677,7 @@ class Controller:
             front_dist = self.laserscan.ranges[front_idx]
 
             if math.isnan(front_dist) or (
-                front_dist != float("inf") and front_dist < 0.6
+                front_dist != float("inf") and front_dist < 0.4
             ):
                 rospy.loginfo("Wall detected, re-routing...")
                 turn = np.random.choice([pi / 2, -pi / 2])
@@ -662,7 +689,7 @@ class Controller:
                     turn = np.random.choice([pi / 2, -pi / 2])
                     self.rotate_action(turn)
                 else:
-                    self.forward_action(0.5)
+                    self.forward_action(0.3)
 
             self.take_measurements()
             rate.sleep()
