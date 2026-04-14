@@ -353,12 +353,12 @@ class ParticleFilter:
             noisy_theta = angle_to_neg_pi_to_pi(
                 particle.theta
                 + delta_theta
-                + np.random.normal(0, self.rotation_variance)
+                + np.random.normal(0, math.sqrt(self.rotation_variance))
             )
 
             if delta_dist > 1e-6:
-                noisy_dist = delta_dist + np.random.normal(0, self.translation_variance)
-                travel_angle = particle.theta + np.random.normal(0, self.rotation_variance / 2)
+                noisy_dist = delta_dist + np.random.normal(0, math.sqrt(self.translation_variance))
+                travel_angle = particle.theta + np.random.normal(0, math.sqrt(self.rotation_variance) / 2)
                 new_x = particle.x + noisy_dist * math.cos(travel_angle)
                 new_y = particle.y + noisy_dist * math.sin(travel_angle)
 
@@ -441,6 +441,9 @@ class ParticleFilter:
             u = r + m / n_systematic
             while u > c:
                 i += 1
+                if i >= len(weights):
+                    i = len(weights) - 1
+                    break
                 c += weights[i]
             new_particles.append(copy.deepcopy(self._particles[i]))
 
