@@ -412,6 +412,7 @@ class ParticleFilter:
 
     def resample(self):
         threshold_fraction = 0.3
+        DEAD_THRESHOLD = -1e6  # catches wall-penalized particles
 
         log_weights = np.array([p.log_p for p in self._particles])
         log_weights -= np.max(log_weights)
@@ -421,6 +422,34 @@ class ParticleFilter:
         n_eff = 1.0 / np.sum(weights**2)
         n_threshold = threshold_fraction * self.n_particles
 
+        # --- Always replace dead (wall-hit) particles with random ones ---
+        x_min, x_max = self._map.map_aabb[0], self._map.map_aabb[1]
+        y_min, y_max = self._map.map_aabb[2], self._map.map_aabb[3]
+
+        replaced = 0
+        for p in self._particles:
+            if p.log_p <= DEAD_THRESHOLD:
+                injected_flag = False
+                for _ in range(50):
+                    rx, ry = uniform(x_min, x_max), uniform(y_min, y_max)
+                    if not self._is_invalid_position(rx, ry):
+                        p.x, p.y = rx, ry
+                        p.theta = uniform(-pi, pi)
+                        p.log_p = 0.0
+                        injected_flag = True
+                        replaced += 1
+                        break
+
+        if replaced:
+            rospy.loginfo(f"Replaced {replaced} wall-penalized particles with random ones")
+
+        # Recompute weights after replacement
+        log_weights = np.array([p.log_p for p in self._particles])
+        log_weights -= np.max(log_weights)
+        weights = np.exp(log_weights)
+        weights /= np.sum(weights)
+        n_eff = 1.0 / np.sum(weights**2)
+
         rospy.loginfo(f"N_eff: {n_eff:.1f} / {self.n_particles}")
 
         if n_eff >= n_threshold:
@@ -428,9 +457,17 @@ class ParticleFilter:
                 p.log_p = math.log(w + 1e-12)
             return
 
-        # --- Systematic resampling ---
-        INJECT_FRACTION = 0.1
-        n_inject = max(1, int(INJECT_FRACTION * self.n_particles))
+        ALWAYS_INJECT_FRACTION = 0.0
+        REACTIVE_INJECT_FRACTION = 0.10
+        
+        max_weight = np.max(weights)
+        COLLAPSE_THRESHOLD = 5.0 / self.n_particles
+
+        if max_weight < COLLAPSE_THRESHOLD:
+            n_inject = max(1, int(REACTIVE_INJECT_FRACTION * self.n_particles))
+        else:
+            n_inject = max(1, int(ALWAYS_INJECT_FRACTION * self.n_particles))
+
         n_systematic = self.n_particles - n_inject
 
         new_particles = []
@@ -453,37 +490,20 @@ class ParticleFilter:
             p.theta = angle_to_neg_pi_to_pi(p.theta + np.random.normal(0, 0.01))
             p.log_p = 0.0
 
-        # Only inject random particles if the filter looks truly lost
-        # (best weight is very small), not just converging
-        max_weight = np.max(weights)
-        COLLAPSE_THRESHOLD = 5.0 / self.n_particles  # e.g. 5x uniform weight
-
-        x_min, x_max = self._map.map_aabb[0], self._map.map_aabb[1]
-        y_min, y_max = self._map.map_aabb[2], self._map.map_aabb[3]
-
-        if max_weight < COLLAPSE_THRESHOLD:
-            # Filter is truly lost — inject random particles for recovery
-            injected = 0
-            attempts = 0
-            while injected < n_inject and attempts < n_inject * 20:
-                rx = uniform(x_min, x_max)
-                ry = uniform(y_min, y_max)
-                if not self._is_invalid_position(rx, ry):
-                    rtheta = uniform(-pi, pi)
-                    new_particles.append(Particle(rx, ry, rtheta, 0.0))
-                    injected += 1
-                attempts += 1
-        else:
-            # Filter is converging normally — fill remaining slots by resampling
-            # (no random scatter)
-            for _ in range(n_inject):
-                idx = np.random.choice(self.n_particles, p=weights)
-                p = copy.deepcopy(self._particles[idx])
-                p.x += np.random.normal(0, 0.02)
-                p.y += np.random.normal(0, 0.02)
-                p.theta = angle_to_neg_pi_to_pi(p.theta + np.random.normal(0, 0.01))
-                p.log_p = 0.0
-                new_particles.append(p)
+        injected = 0
+        attempts = 0
+        while injected < n_inject and attempts < n_inject * 20:
+            rx = uniform(x_min, x_max)
+            ry = uniform(y_min, y_max)
+            if not self._is_invalid_position(rx, ry):
+                rtheta = uniform(-pi, pi)
+                new_particles.append(Particle(rx, ry, rtheta, 0.0))
+                injected += 1
+            attempts += 1
+            
+        while len(new_particles) < self.n_particles:
+            idx = np.random.choice(n_systematic)
+            new_particles.append(copy.deepcopy(new_particles[idx]))
 
         self._particles = new_particles
 
@@ -597,7 +617,7 @@ class Controller:
         # Spread across front hemisphere so each reading gives orthogonal
         # positional evidence. Clustered-front angles (e.g. -15/0/15) are
         # highly correlated and barely help disambiguate location.
-        selected_angles = [-90, -45, 0, 45, 90]
+        selected_angles = [-135, -90, -45, 0, 45, 90, 135]
 
         for angle_deg in selected_angles:
             angle_rad = math.radians(angle_deg)
@@ -631,9 +651,9 @@ class Controller:
         # Robot autonomously explores environment while it localizes itself
         ######### Your code starts here #########
         rate = rospy.Rate(10)
-        CONFIDENCE_THRESHOLD = 0.1
+        CONFIDENCE_THRESHOLD = 0.15
         RANDOM_TURN_PROB = 0.1
-        MAX_CONVERGENCES = 3
+        MAX_CONVERGENCES = 1
         convergence_count = 0
 
         while not rospy.is_shutdown():
