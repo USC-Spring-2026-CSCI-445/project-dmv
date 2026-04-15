@@ -495,7 +495,7 @@ class Controller:
         # correct neighborhood won't be found.
 
         # choose 0 degrees (front) and 90 degrees (left) as feature points
-        angles_to_check = [0, 90, 180]
+        angles_to_check = [0, 90, 180, 270]
 
         for angle_deg in angles_to_check:
             z = self.laserscan.ranges[angle_deg]
