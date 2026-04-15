@@ -491,7 +491,7 @@ class Controller:
         if self.laserscan is None:
             return
 
-        selected_angles = [-135, -90, -45, 0, 45, 90, 135]
+        selected_angles = [0, 90]
 
         for angle_deg in selected_angles:
             angle_rad = math.radians(angle_deg)
