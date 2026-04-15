@@ -555,18 +555,52 @@ class Controller:
                 # break out of the while loop, completing the exploration task
                 break
 
-            # 4. exploration and obstacle avoidance logic
-            front_idx = int(
-                (0.0 - self.laserscan.angle_min) / self.laserscan.angle_increment
-            )
-            front_idx = max(0, min(len(self.laserscan.ranges) - 1, front_idx))
-            front_dist = self.laserscan.ranges[front_idx]
+            # 4. Robust Obstacle Avoidance
 
-            if math.isnan(front_dist) or (front_dist != float("inf") and front_dist < 0.55):
-                rospy.loginfo("Wall detected, re-routing...")
-                turn = np.random.choice([pi / 2, -pi / 2])
-                self.rotate_action(turn)
+            front_dists = []
+            left_dists = []
+            right_dists = []
+
+            # read all laserscan readings, distribute them to front, left, and right sectors
+            for i, dist in enumerate(self.laserscan.ranges):
+                # filter out invalid values (nan, inf or too close to the sensor)
+                if math.isnan(dist) or math.isinf(dist) or dist < 0.05:
+                    continue
+
+                # calculate the actual angle of this reading
+                angle = self.laserscan.angle_min + i * self.laserscan.angle_increment
+
+                # standardize the angle to [-pi, pi], ensuring the front is always 0
+                angle = angle_to_neg_pi_to_pi(angle)
+
+                # distribute the readings to corresponding sectors (in radians. pi/6 is about 30 degrees)
+                if -math.pi/6 <= angle <= math.pi/6:       # front sector (-30° to 30°)
+                    front_dists.append(dist)
+                elif math.pi/6 < angle <= math.pi/2:       # left sector (30° to 90°)
+                    left_dists.append(dist)
+                elif -math.pi/2 <= angle < -math.pi/6:     # right sector (-90° to -30°)
+                    right_dists.append(dist)
+
+            # get the minimum distance in each sector. If the array is empty (meaning the sector is completely filled with invalid values/obstacles), give it 0.0 for safety
+            front_min = min(front_dists) if front_dists else 0.0
+            left_min = min(left_dists) if left_dists else 0.0
+            right_min = min(right_dists) if right_dists else 0.0
+
+            SAFE_DIST = 0.55
+
+            if front_min < SAFE_DIST:
+                rospy.loginfo(f"Wall detected ahead (dist: {front_min:.2f}m), computing best route...")
+
+                # compare left and right sides to see which is clearer (greater distance)
+                if left_min > right_min:
+                    rospy.loginfo("Left side is clearer, turning LEFT.")
+                    # turning 45 degrees (pi/4) is smoother than 90 degrees
+                    self.rotate_action(math.pi / 4)
+                else:
+                    rospy.loginfo("Right side is clearer, turning RIGHT.")
+                    self.rotate_action(-math.pi / 4)
             else:
+                # front safe, continue forward
                 self.forward_action(0.3)
 
             rate.sleep()
