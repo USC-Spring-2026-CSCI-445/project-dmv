@@ -518,7 +518,7 @@ class Controller:
         """
         # Robot autonomously explores environment while it localizes itself
         ######### Your code starts here #########
-        rate = rospy.Rate(2)
+        rate = rospy.Rate(10)
 
         # turning left is the key to convergence
         self.rotate_action(pi/2)
@@ -562,11 +562,9 @@ class Controller:
 
             if front_dist < 0.6:
                 # front has obstacle, randomly turn left or right 90 degrees
-                current_theta = self.current_position["theta"]
-                turn_amount = choice([math.pi/2, -math.pi/2])
-                target_theta = angle_to_neg_pi_to_pi(current_theta + turn_amount)
-                rospy.loginfo(f"Obstacle ahead! Rotating by {math.degrees(turn_amount)} degrees.")
-                self.rotate_action(target_theta)
+                random_turn = choice([math.pi/2, -math.pi/2])
+                rospy.loginfo(f"Obstacle ahead! Rotating by {math.degrees(random_turn)} degrees.")
+                self.rotate_action(random_turn)
             else:
                 # front is safe, move forward 0.3 meters
                 self.forward_action(0.3)
