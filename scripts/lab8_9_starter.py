@@ -586,7 +586,7 @@ class Controller:
             left_min = min(left_dists) if left_dists else 0.0
             right_min = min(right_dists) if right_dists else 0.0
 
-            SAFE_DIST = 0.55
+            SAFE_DIST = 0.45
 
             if front_min < SAFE_DIST:
                 rospy.loginfo(f"Wall detected ahead (dist: {front_min:.2f}m), computing best route...")
@@ -601,7 +601,7 @@ class Controller:
                     self.rotate_action(-math.pi / 4)
             else:
                 # front safe, continue forward
-                self.forward_action(0.3)
+                self.forward_action(0.2)
 
             rate.sleep()
         ######### Your code ends here #########
