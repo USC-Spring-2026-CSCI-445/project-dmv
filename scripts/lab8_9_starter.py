@@ -315,6 +315,7 @@ class ParticleFilter:
         # Propagate motion of each particle
         ######### Your code starts here #########
         d = math.hypot(delta_x, delta_y)  # calculate actual movement distance
+        x_min, x_max, y_min, y_max = self.map_.map_aabb # get map bounds
 
         for p in self._particles:
             # add Gaussian noise
@@ -329,6 +330,9 @@ class ParticleFilter:
             p.theta = angle_to_neg_pi_to_pi(p.theta + noisy_delta_theta)
             p.x += noisy_d * math.cos(p.theta)
             p.y += noisy_d * math.sin(p.theta)
+            # ensure particles stay within map bounds
+            p.x = max(x_min, min(p.x, x_max))
+            p.y = max(y_min, min(p.y, y_max))
         ######### Your code ends here #########
 
     def measure(self, z: float, scan_angle_in_rad: float):
@@ -367,22 +371,33 @@ class ParticleFilter:
         weights = np.exp(log_weights - max_log_w)
         weights /= np.sum(weights)
 
-        # Resampling: based on weights (Roulette wheel) choose n_particles new particles
-        resampled_indices = np.random.choice(
-            len(self._particles), size=self.n_particles, p=weights, replace=True
-        )
+        # Calculate effective sample size
+        n_eff = 1.0 / np.sum(weights ** 2)
+        # Calculate resampling threshold as half of the number of particles
+        n_threshold = self.n_particles / 2.0
 
-        new_particles = []
-        new_log_p = math.log(
-            1.0 / self.n_particles
-        )  # after resampling, reset weights to equal
-        for idx in resampled_indices:
-            old_p = self._particles[idx]
-            new_particles.append(
-                Particle(old_p.x, old_p.y, old_p.theta, new_log_p)
+        if n_eff < n_threshold:
+            # Resampling: based on weights (Roulette wheel) choose n_particles new particles
+            resampled_indices = np.random.choice(
+                len(self._particles), size=self.n_particles, p=weights, replace=True
             )
 
-        self._particles = new_particles
+            new_particles = []
+            new_log_p = math.log(
+                1.0 / self.n_particles
+            )  # after resampling, reset weights to equal
+            for idx in resampled_indices:
+                old_p = self._particles[idx]
+                new_particles.append(
+                    Particle(old_p.x, old_p.y, old_p.theta, new_log_p)
+                )
+
+            self._particles = new_particles
+        else:
+          # If not resampling, just update the log probabilities of the particles based on the measurement likelihoods
+          for i, p in enumerate(self._particles):
+              safe_weight = max(weights[i], 1e-300)
+              p.log_p = math.log(safe_weight)
         ######### Your code ends here #########
 
 
