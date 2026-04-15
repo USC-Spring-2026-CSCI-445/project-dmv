@@ -511,7 +511,6 @@ class Controller:
 
             self._particle_filter.measure(z, angle_rad)
 
-        self._particle_filter.resample()
         self._particle_filter.visualize_particles()
         self._particle_filter.visualize_estimate()
 
@@ -572,8 +571,6 @@ class Controller:
                 while spawned < self._particle_filter.n_particles:
                     x = uniform(x_min, x_max)
                     y = uniform(y_min, y_max)
-                    if self._particle_filter._is_invalid_position(x, y):
-                        continue
                     theta = uniform(-pi, pi)
                     new_particles.append(Particle(x, y, theta, 0.0))
                     spawned += 1
