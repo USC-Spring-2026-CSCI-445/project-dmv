@@ -353,12 +353,12 @@ class ParticleFilter:
             noisy_theta = angle_to_neg_pi_to_pi(
                 particle.theta
                 + delta_theta
-                + np.random.normal(0, math.sqrt(self.rotation_variance))
+                + np.random.normal(0, self.rotation_variance)
             )
 
             if delta_dist > 1e-6:
-                noisy_dist = delta_dist + np.random.normal(0, math.sqrt(self.translation_variance))
-                travel_angle = particle.theta + np.random.normal(0, math.sqrt(self.rotation_variance) / 2)
+                noisy_dist = delta_dist + np.random.normal(0, self.translation_variance)
+                travel_angle = particle.theta + np.random.normal(0, self.rotation_variance / 2)
                 new_x = particle.x + noisy_dist * math.cos(travel_angle)
                 new_y = particle.y + noisy_dist * math.sin(travel_angle)
 
@@ -411,7 +411,7 @@ class ParticleFilter:
             particle.log_p += math.log(likelihood + 1e-12)
 
     def resample(self):
-        threshold_fraction = 0.3
+        threshold_fraction = 0.5
         DEAD_THRESHOLD = -1e6  # catches wall-penalized particles
 
         log_weights = np.array([p.log_p for p in self._particles])
@@ -614,9 +614,6 @@ class Controller:
         if self.laserscan is None:
             return
 
-        # Spread across front hemisphere so each reading gives orthogonal
-        # positional evidence. Clustered-front angles (e.g. -15/0/15) are
-        # highly correlated and barely help disambiguate location.
         selected_angles = [-135, -90, -45, 0, 45, 90, 135]
 
         for angle_deg in selected_angles:
@@ -700,7 +697,7 @@ class Controller:
             front_dist = self.laserscan.ranges[front_idx]
 
             if math.isnan(front_dist) or (
-                front_dist != float("inf") and front_dist < 0.4
+                front_dist != float("inf") and front_dist < 0.55
             ):
                 rospy.loginfo("Wall detected, re-routing...")
                 turn = np.random.choice([pi / 2, -pi / 2])
@@ -712,7 +709,7 @@ class Controller:
                     turn = np.random.choice([pi / 2, -pi / 2])
                     self.rotate_action(turn)
                 else:
-                    self.forward_action(0.3)
+                    self.forward_action(0.4)
 
             self.take_measurements()
             rate.sleep()
