@@ -427,15 +427,36 @@ class ParticleFilter:
         x_min, x_max = self._map.map_aabb[0], self._map.map_aabb[1]
         y_min, y_max = self._map.map_aabb[2], self._map.map_aabb[3]
 
+        est_x, est_y, est_theta = self.get_estimate()
         replaced = 0
         for p in self._particles:
+            # if p.log_p < DEAD_THRESHOLD:
+            #     injected_flag = False
+            #     for _ in range(50):
+            #         rx, ry = uniform(x_min, x_max), uniform(y_min, y_max)
+            #         if not self._is_invalid_position(rx, ry):
+            #             p.x, p.y = rx, ry
+            #             p.theta = uniform(-pi, pi)
+            #             p.log_p = 0.0
+            #             injected_flag = True
+            #             replaced += 1
+            #             break
+
             if p.log_p < DEAD_THRESHOLD:
                 injected_flag = False
                 for _ in range(50):
-                    rx, ry = uniform(x_min, x_max), uniform(y_min, y_max)
+                    if uniform(0, 1) < 0.7:
+                        rx = est_x + np.random.normal(0, 0.15)
+                        ry = est_y + np.random.normal(0, 0.15)
+                        rtheta = angle_to_neg_pi_to_pi(est_theta + np.random.normal(0, 0.2))
+                    else:
+                        rx = uniform(x_min, x_max)
+                        ry = uniform(y_min, y_max)
+                        rtheta = uniform(-pi, pi)
+                    
                     if not self._is_invalid_position(rx, ry):
                         p.x, p.y = rx, ry
-                        p.theta = uniform(-pi, pi)
+                        p.theta = rtheta
                         p.log_p = 0.0
                         injected_flag = True
                         replaced += 1
