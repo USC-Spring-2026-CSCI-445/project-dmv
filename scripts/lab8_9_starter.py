@@ -378,23 +378,28 @@ class ParticleFilter:
 
         if n_eff < n_threshold:
             # Resampling: based on weights (Roulette wheel) choose n_particles new particles
-            resampled_indices = np.random.choice(
-                len(self._particles), size=self.n_particles, p=weights, replace=True
-            )
-
+            # Low Variance Resampling incrementing by 1/(numParticles)
             new_particles = []
-            new_log_p = math.log(
-                1.0 / self.n_particles
-            )  # after resampling, reset weights to equal
-            for idx in resampled_indices:
-                old_p = self._particles[idx]
-                new_particles.append(
-                    Particle(old_p.x, old_p.y, old_p.theta, new_log_p)
-                )
+            new_log_p = math.log(1.0 / self.n_particles)
+
+            # choose an initial random number r
+            r = uniform(0, 1.0 / self.n_particles)
+            c = weights[0]
+            i = 0
+
+            for m in range(self.n_particles):
+                u = r + m * (1.0 / self.n_particles) # Incrementing by 1/N
+                while u > c:
+                    i += 1
+                    c += weights[i]
+
+                # copy the selected particle
+                old_p = self._particles[i]
+                new_particles.append(Particle(old_p.x, old_p.y, old_p.theta, new_log_p))
 
             self._particles = new_particles
         else:
-          # If not resampling, just update the log probabilities of the particles based on the measurement likelihoods
+          # If not resampling, just update the log probabilities
           for i, p in enumerate(self._particles):
               safe_weight = max(weights[i], 1e-300)
               p.log_p = math.log(safe_weight)
