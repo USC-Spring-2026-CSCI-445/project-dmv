@@ -543,7 +543,7 @@ class Controller:
             # use numpy to calculate standard deviation (Standard Deviation)
             x_std = np.std(x_coords)
             y_std = np.std(y_coords)
-
+            rospy.loginfo(f"Particle spread - X std: {x_std:.3f}, Y std: {y_std:.3f}, Threshold: {GOAL_THRESHOLD}")
             # if particles are tightly clustered in both X and Y directions, localization is successful
             if x_std < GOAL_THRESHOLD and y_std < GOAL_THRESHOLD:
                 rospy.loginfo("Particle Filter has converged!")
