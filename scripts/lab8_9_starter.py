@@ -500,10 +500,9 @@ class Controller:
         for angle_deg in angles_to_check:
             z = self.laserscan.ranges[angle_deg]
 
-            # 防呆檢查：確保讀值有效 (不是 inf 也不是 NaN)
             if not math.isinf(z) and not math.isnan(z) and z > 0.0:
                 angle_rad = math.radians(angle_deg)
-                # 呼叫 Particle Filter 更新粒子機率與 Resampling
+                # call Particle Filter update particle probabilities and resampling
                 self._particle_filter.measure(z, angle_rad)
 
         ######### Your code ends here #########
@@ -522,6 +521,7 @@ class Controller:
 
         # turning left is the key to convergence
         self.rotate_action(pi/2)
+        self.forward_action(0.15)
 
         while not rospy.is_shutdown():
             # 1. sense and update Particle Filter
