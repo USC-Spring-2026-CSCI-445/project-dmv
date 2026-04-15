@@ -577,89 +577,84 @@ class Controller:
     def forward_action(self, distance: float):
         # Robot moves forward by a set amount during manual control
         ######### Your code starts here #########
-        # instantiate the PID Controller
-        # parameters (kp, ki, kd, ks, u_min, u_max)
-        # maximum forward speed set to 0.2 m/s, integral saturation kS set to 1.0
-        pid = PIDController(1.0, 0.0, 0.1, 1.0, -0.2, 0.2)
+        pid_dist = PIDController(
+            kP=1.2, kI=0.0, kD=1.5, kS=0.5, u_min=-0.22, u_max=0.22
+        )
+        pid_angle = PIDController(
+            kP=1.2, kI=0.2, kD=1.0, kS=0.5, u_min=-2.0, u_max=2.0
+        )
 
-        start_x = self.current_position["x"]
-        start_y = self.current_position["y"]
+        start_pos = copy.deepcopy(self.current_position)
+        start_theta = start_pos["theta"]
 
         rate = rospy.Rate(20)
+
         while not rospy.is_shutdown():
-            curr_x = self.current_position["x"]
-            curr_y = self.current_position["y"]
+            dx = self.current_position["x"] - start_pos["x"]
+            dy = self.current_position["y"] - start_pos["y"]
 
-            # calculate distance traveled from the start position using Euclidean distance
-            dist_traveled = math.hypot(curr_x - start_x, curr_y - start_y)
+            forward_progress = dx * math.cos(start_theta) + dy * math.sin(
+                start_theta
+            )
+            distance_error = distance - forward_progress
 
-            # error = target distance - distance traveled
-            # if distance is negative (driving backwards), the logic still applies
-            target_dist = abs(distance)
-            error = target_dist - dist_traveled
+            heading_error = angle_to_neg_pi_to_pi(
+                start_theta - self.current_position["theta"]
+            )
 
-            # if error is less than 2 cm, consider it reached the target
-            if error < 0.02:
+            if abs(distance_error) < 0.02:
                 break
 
-            # get current time and calculate PID output
-            t = rospy.get_time()
-            u = pid.control(error, t)
-
-            # if original distance setting is negative, we need to reverse the calculated speed
-            if distance < 0:
-                u = -u
+            v = pid_dist.control(distance_error, rospy.get_time())
+            w = pid_angle.control(heading_error, rospy.get_time())
 
             twist = Twist()
-            twist.linear.x = u
+            twist.linear.x = v
+            twist.angular.z = w
             self.robot_ctrl_pub.publish(twist)
+
             rate.sleep()
 
-        # break and stop the robot
         self.robot_ctrl_pub.publish(Twist())
 
-        # synchronize Particle Filter's virtual particle states
-        self._particle_filter.move_by(distance, 0.0, 0.0)
+        delta_x = self.current_position["x"] - start_pos["x"]
+        delta_y = self.current_position["y"] - start_pos["y"]
+        delta_theta = angle_to_neg_pi_to_pi(
+            self.current_position["theta"] - start_theta
+        )
+
+        self._particle_filter.move_by(delta_x, delta_y, delta_theta)
+        self._particle_filter.visualize_particles()
         ######### Your code ends here #########
 
     def rotate_action(self, goal_theta: float):
-        # Robot turns by a set amount during manual control
-        ######### Your code starts here #########
-        # rotate using PID Controller
-        # maximum angular velocity limited to 0.5 rad/s
-        pid = PIDController(1.5, 0.0, 0.1, 1.0, -0.5, 0.5)
+        pid = PIDController(
+            kP=1.2, kI=0.2, kD=1.0, kS=0.5, u_min=-2.0, u_max=2.0
+        )
 
         start_theta = self.current_position["theta"]
+        target_theta = angle_to_neg_pi_to_pi(start_theta + goal_theta)
 
         rate = rospy.Rate(20)
         while not rospy.is_shutdown():
-            curr_theta = self.current_position["theta"]
+            error = angle_to_neg_pi_to_pi(
+                target_theta - self.current_position["theta"]
+            )
 
-            # calculate angle error (automatically convert to -pi ~ pi range, ensure shortest turn path)
-            error = angle_to_neg_pi_to_pi(goal_theta - curr_theta)
-
-            # if error is less than 0.05 radians (about 2.8 degrees), consider it completed
-            if abs(error) < 0.05:
+            if abs(error) < 0.03:
                 break
 
-            # get current time and calculate PID output
-            t = rospy.get_time()
-            u = pid.control(error, t)
-
-            twist = Twist()
-            twist.angular.z = u
-            self.robot_ctrl_pub.publish(twist)
+            ang_vel = pid.control(error, rospy.get_time())
+            self.robot_ctrl_pub.publish(Twist(angular=Vector3(z=ang_vel)))
             rate.sleep()
 
-        # break and stop the robot
         self.robot_ctrl_pub.publish(Twist())
 
-        # calculate actual rotation and synchronize with Particle Filter
-        end_theta = self.current_position["theta"]
-        delta_theta = angle_to_neg_pi_to_pi(end_theta - start_theta)
-        self._particle_filter.move_by(0.0, 0.0, delta_theta)
-
-        ######### Your code ends here #########
+        actual_delta_theta = angle_to_neg_pi_to_pi(
+            self.current_position["theta"] - start_theta
+        )
+        self._particle_filter.move_by(0, 0, actual_delta_theta)
+        self._particle_filter.visualize_particles()
 
 
 """ Example usage
