@@ -40,6 +40,8 @@ POSITION_TYPE = Dict[str, float]
 # don't change this
 GOAL_THRESHOLD = 0.1
 
+IMPOSSIBLE_LOG_P = -1e12
+DEAD_THRESHOLD = -1e9
 
 def angle_to_0_to_2pi(angle: float) -> float:
     while angle < 0:
@@ -369,7 +371,7 @@ class ParticleFilter:
 
                     # The real robot moved, but this hypothesis hit a wall.
                     # Heavily penalize this particle so it dies in resampling.
-                    particle.log_p += -1e6
+                    particle.log_p = IMPOSSIBLE_LOG_P
                     particle.theta = noisy_theta
 
                     # You can safely skip updating its coordinates.
@@ -388,7 +390,7 @@ class ParticleFilter:
 
         for particle in self._particles:
             if self._is_invalid_position(particle.x, particle.y):
-                particle.log_p += -1e6
+                particle.log_p = IMPOSSIBLE_LOG_P
                 continue
 
             expected = self._map.closest_distance(
@@ -396,7 +398,7 @@ class ParticleFilter:
             )
 
             if expected is None:
-                particle.log_p += -1e6
+                particle.log_p = IMPOSSIBLE_LOG_P
                 continue
 
             # Gaussian likelihood
@@ -412,7 +414,6 @@ class ParticleFilter:
 
     def resample(self):
         threshold_fraction = 0.5
-        DEAD_THRESHOLD = -1e6  # catches wall-penalized particles
 
         log_weights = np.array([p.log_p for p in self._particles])
         log_weights -= np.max(log_weights)
@@ -428,7 +429,7 @@ class ParticleFilter:
 
         replaced = 0
         for p in self._particles:
-            if p.log_p <= DEAD_THRESHOLD:
+            if p.log_p < DEAD_THRESHOLD:
                 injected_flag = False
                 for _ in range(50):
                     rx, ry = uniform(x_min, x_max), uniform(y_min, y_max)
@@ -458,7 +459,7 @@ class ParticleFilter:
             return
 
         ALWAYS_INJECT_FRACTION = 0.0
-        REACTIVE_INJECT_FRACTION = 0.10
+        REACTIVE_INJECT_FRACTION = 0.0
         
         max_weight = np.max(weights)
         COLLAPSE_THRESHOLD = 5.0 / self.n_particles
