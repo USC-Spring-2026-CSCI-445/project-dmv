@@ -371,7 +371,7 @@ class ParticleFilter:
         # Calculate effective sample size
         n_eff = 1.0 / np.sum(weights ** 2)
         # Calculate resampling threshold as half of the number of particles
-        n_threshold = self.n_particles * 0.5
+        n_threshold = self.n_particles * 0.7
 
         if n_eff < n_threshold:
             # Resampling: based on weights (Roulette wheel) choose n_particles new particles
