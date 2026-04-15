@@ -405,6 +405,26 @@ class ParticleFilter:
               p.log_p = math.log(safe_weight)
         ######### Your code ends here #########
 
+    def get_estimate(self) -> Tuple[float, float, float]:
+        # Estimate robot's location using particle weights
+        ######### Your code starts here #########
+        x_est = 0.0
+        y_est = 0.0
+        sin_sum = 0.0
+        cos_sum = 0.0
+
+        for p in self._particles:
+            prob = math.exp(p.log_p) # after resampling, this equals 1 / N
+            x_est += prob * p.x
+            y_est += prob * p.y
+            sin_sum += prob * math.sin(p.theta)
+            cos_sum += prob * math.cos(p.theta)
+
+        theta_est = math.atan2(sin_sum, cos_sum)
+
+        return x_est, y_est, theta_est
+        ######### Your code ends here #########
+
 
 class Controller:
     def __init__(self, particle_filter: ParticleFilter):
