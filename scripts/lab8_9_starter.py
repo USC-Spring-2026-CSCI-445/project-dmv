@@ -519,6 +519,9 @@ class Controller:
         ######### Your code starts here #########
         rate = rospy.Rate(10)
 
+        self.take_measurements()
+        self._particle_filter.visualize_particles()
+        self._particle_filter.visualize_estimate()
         # turning left is the key to convergence
         self.rotate_action(pi/2)
         self.forward_action(0.15)
