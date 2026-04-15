@@ -545,58 +545,12 @@ class Controller:
         # Robot autonomously explores environment while it localizes itself
         ######### Your code starts here #########
         rate = rospy.Rate(10)
-        CONFIDENCE_THRESHOLD = 0.15
         RANDOM_TURN_PROB = 0.1
-        MAX_CONVERGENCES = 1
-        convergence_count = 0
+
+        # start by rotating 90 is the key
+        self.rotate_action(pi/2)
 
         while not rospy.is_shutdown():
-
-            particles_x = [p.x for p in self._particle_filter._particles]
-            particles_y = [p.y for p in self._particle_filter._particles]
-
-            std_x = np.std(particles_x)
-            std_y = np.std(particles_y)
-
-            rospy.loginfo(
-                f"Spread - X: {std_x:.3f}, Y: {std_y:.3f} | Convergences: {convergence_count}/{MAX_CONVERGENCES}"
-            )
-
-            if std_x < CONFIDENCE_THRESHOLD and std_y < CONFIDENCE_THRESHOLD:
-                convergence_count += 1
-                rospy.loginfo(
-                    f"Localization converged! ({convergence_count}/{MAX_CONVERGENCES})"
-                )
-
-                if convergence_count >= MAX_CONVERGENCES:
-                    rospy.loginfo("Localization complete!")
-                    break
-
-                # Reinitialize particles uniformly so the filter tries again
-                # from scratch. The robot has moved, so the new sensor context
-                # gives a fresh chance to land on the true position.
-                rospy.loginfo(
-                    "Reinitializing particles for next convergence attempt..."
-                )
-                x_min, x_max = (
-                    self._particle_filter._map.map_aabb[0],
-                    self._particle_filter._map.map_aabb[1],
-                )
-                y_min, y_max = (
-                    self._particle_filter._map.map_aabb[2],
-                    self._particle_filter._map.map_aabb[3],
-                )
-                new_particles = []
-                spawned = 0
-                while spawned < self._particle_filter.n_particles:
-                    x = uniform(x_min, x_max)
-                    y = uniform(y_min, y_max)
-                    theta = uniform(-pi, pi)
-                    new_particles.append(Particle(x, y, theta, 0.0))
-                    spawned += 1
-                self._particle_filter._particles = new_particles
-                self._particle_filter.visualize_particles()
-
             front_idx = int(
                 (0.0 - self.laserscan.angle_min)
                 / self.laserscan.angle_increment
