@@ -371,7 +371,7 @@ class ParticleFilter:
         # Calculate effective sample size
         n_eff = 1.0 / np.sum(weights ** 2)
         # Calculate resampling threshold as half of the number of particles
-        n_threshold = self.n_particles * 0.8
+        n_threshold = self.n_particles * 0.5
 
         if n_eff < n_threshold:
             # Resampling: based on weights (Roulette wheel) choose n_particles new particles
@@ -495,7 +495,7 @@ class Controller:
         # correct neighborhood won't be found.
 
         # choose 0 degrees (front) and 90 degrees (left) as feature points
-        angles_to_check = [0, 90]
+        angles_to_check = [0, 90, 180]
 
         for angle_deg in angles_to_check:
             z = self.laserscan.ranges[angle_deg]
