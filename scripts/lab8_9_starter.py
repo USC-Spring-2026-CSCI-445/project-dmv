@@ -556,17 +556,17 @@ class Controller:
                 break
 
             # 4. exploration and obstacle avoidance logic
-            front_dist = self.laserscan.ranges[0]
-            if math.isnan(front_dist) or front_dist == 0:
-                front_dist = math.inf
+            front_idx = int(
+                (0.0 - self.laserscan.angle_min) / self.laserscan.angle_increment
+            )
+            front_idx = max(0, min(len(self.laserscan.ranges) - 1, front_idx))
+            front_dist = self.laserscan.ranges[front_idx]
 
-            if front_dist < 0.6:
-                # front has obstacle, randomly turn left or right 90 degrees
-                random_turn = choice([math.pi/2, -math.pi/2])
-                rospy.loginfo(f"Obstacle ahead! Rotating by {math.degrees(random_turn)} degrees.")
-                self.rotate_action(random_turn)
+            if math.isnan(front_dist) or (front_dist != float("inf") and front_dist < 0.55):
+                rospy.loginfo("Wall detected, re-routing...")
+                turn = np.random.choice([pi / 2, -pi / 2])
+                self.rotate_action(turn)
             else:
-                # front is safe, move forward 0.3 meters
                 self.forward_action(0.3)
 
             rate.sleep()
