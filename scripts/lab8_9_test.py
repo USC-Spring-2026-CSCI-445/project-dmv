@@ -347,9 +347,18 @@ class ParticleFilter:
 
         return False
 
-    def move_by(self, delta_x, delta_y, delta_theta):
+    def move_by(self, delta_x, delta_y, delta_theta, forward_dist=None):
         delta_theta = angle_to_neg_pi_to_pi(delta_theta)
-        delta_dist = math.sqrt(delta_x**2 + delta_y**2)
+
+        # forward_dist is a signed scalar (positive=forward, negative=backward).
+        # forward_action computes it so the sign that sqrt() would lose is preserved.
+        # rotate_action calls move_by(0,0,dtheta) without it, delta_dist is 0 anyway.
+        if forward_dist is not None:
+            delta_dist = abs(forward_dist)
+            motion_sign = 1.0 if forward_dist >= 0 else -1.0
+        else:
+            delta_dist = math.sqrt(delta_x**2 + delta_y**2)
+            motion_sign = 1.0
 
         for particle in self._particles:
             noisy_theta = angle_to_neg_pi_to_pi(
@@ -359,7 +368,7 @@ class ParticleFilter:
             )
 
             if delta_dist > 1e-6:
-                noisy_dist = delta_dist + np.random.normal(0, self.translation_variance)
+                noisy_dist = motion_sign * (delta_dist + np.random.normal(0, self.translation_variance))
                 travel_angle = particle.theta + np.random.normal(0, self.rotation_variance / 2)
                 new_x = particle.x + noisy_dist * math.cos(travel_angle)
                 new_y = particle.y + noisy_dist * math.sin(travel_angle)
@@ -675,6 +684,9 @@ class Controller:
         MAX_CONVERGENCES = 1
         convergence_count = 0
 
+        close_count = 0       # debounce: 2 consecutive "too close" before reacting
+        rotation_attempts = 0 # escape: force forward if stuck spinning
+
         while not rospy.is_shutdown():
 
             particles_x = [p.x for p in self._particle_filter._particles]
@@ -693,9 +705,6 @@ class Controller:
                     rospy.loginfo("Localization complete!")
                     break
 
-                # Reinitialize particles uniformly so the filter tries again
-                # from scratch. The robot has moved, so the new sensor context
-                # gives a fresh chance to land on the true position.
                 rospy.loginfo("Reinitializing particles for next convergence attempt...")
                 x_min, x_max = self._particle_filter._map.map_aabb[0], self._particle_filter._map.map_aabb[1]
                 y_min, y_max = self._particle_filter._map.map_aabb[2], self._particle_filter._map.map_aabb[3]
@@ -712,32 +721,76 @@ class Controller:
                 self._particle_filter._particles = new_particles
                 self._particle_filter.visualize_particles()
 
-            front_idx = int(
-                (0.0 - self.laserscan.angle_min) / self.laserscan.angle_increment
-            )
-            front_idx = max(0, min(len(self.laserscan.ranges) - 1, front_idx))
-            front_dist = self.laserscan.ranges[front_idx]
+            # Escape if stuck spinning in place
+            if rotation_attempts > 5:
+                rospy.loginfo("Too many rotations; moving forward to escape.")
+                self.forward_action(0.3)
+                rotation_attempts = 0
 
-            if math.isnan(front_dist) or (
-                front_dist != float("inf") and front_dist < 0.45
-            ):
-                rospy.loginfo("Wall detected, re-routing...")
-                turn = np.random.choice([pi / 2, -pi / 2])
-                self.rotate_action(turn)
+            # +/-25 degree front window with debounce
+            too_close = False
+            front_range = None
 
-            else:
+            if self.laserscan is not None:
+                angle_min = self.laserscan.angle_min
+                angle_inc = self.laserscan.angle_increment
+                ranges = self.laserscan.ranges
+                num_ranges = len(ranges)
+
+                low_idx = int(round((-math.radians(25.0) - angle_min) / angle_inc))
+                high_idx = int(round((math.radians(25.0) - angle_min) / angle_inc))
+                low_idx = max(0, min(low_idx, num_ranges - 1))
+                high_idx = max(0, min(high_idx, num_ranges - 1))
+                if low_idx > high_idx:
+                    low_idx, high_idx = high_idx, low_idx
+
+                front_sector = [
+                    r for r in ranges[low_idx:high_idx + 1]
+                    if not np.isinf(r) and not math.isnan(r)
+                ]
+
+                zero_idx = int(round((0.0 - angle_min) / angle_inc))
+                zero_idx = max(0, min(zero_idx, num_ranges - 1))
+                front_range = ranges[zero_idx]
+
+                if len(front_sector) > 0 and min(front_sector) < 0.28:
+                    close_count += 1
+                else:
+                    close_count = 0
+
+                if close_count >= 2:
+                    too_close = True
+
+            # Backup maneuver
+            if too_close:
+                rospy.loginfo("Too close to obstacle, backing up & rotating.")
+                self.forward_action(-0.12)
+                self.rotate_action(uniform(math.pi / 5, math.pi / 3))
+                rotation_attempts += 1
+                self.take_measurements()
+                rate.sleep()
+                continue
+
+            # Main motion policy
+            if front_range is None or np.isinf(front_range) or math.isnan(front_range) or front_range > 0.7:
                 if np.random.rand() < RANDOM_TURN_PROB:
                     rospy.loginfo("Random exploration turn")
-                    turn = np.random.choice([pi / 2, -pi / 2])
-                    self.rotate_action(turn)
+                    self.rotate_action(float(np.random.choice([pi / 2, -pi / 2])))
+                    rotation_attempts += 1
                 else:
                     self.forward_action(0.3)
+                    rotation_attempts = 0
+            else:
+                rospy.loginfo("Obstacle ahead, rotating to find new direction.")
+                self.rotate_action(float(np.random.choice([pi / 2, -pi / 2])))
+                rotation_attempts += 1
 
             self.take_measurements()
             rate.sleep()
 
         self.robot_ctrl_pub.publish(Twist())
         ######### Your code ends here #########
+
 
     def forward_action(self, distance: float):
         # Robot moves forward by a set amount during manual control
@@ -784,7 +837,13 @@ class Controller:
             self.current_position["theta"] - start_theta
         )
 
-        self._particle_filter.move_by(delta_x, delta_y, delta_theta)
+        # Project world-frame displacement onto start_theta to get the signed
+        # scalar distance: positive = moved forward, negative = moved backward.
+        # This is passed to move_by so it can negate noisy_dist for backups
+        # without touching the per-particle heading logic.
+        signed_dist = delta_x * math.cos(start_theta) + delta_y * math.sin(start_theta)
+
+        self._particle_filter.move_by(delta_x, delta_y, delta_theta, forward_dist=signed_dist)
         self._particle_filter.visualize_particles()
         ######### Your code ends here #########
 
