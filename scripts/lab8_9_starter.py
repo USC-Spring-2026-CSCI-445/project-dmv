@@ -32,12 +32,9 @@ from numpy.random import choice
 
 np.set_printoptions(linewidth=200)
 
-# AABB format: (x_min, x_max, y_min, y_max)
 OBS_TYPE = Tuple[float, float, float, float]
-# Position format: {"x": x, "y": y, "theta": theta}
 POSITION_TYPE = Dict[str, float]
 
-# don't change this
 GOAL_THRESHOLD = 0.1
 
 IMPOSSIBLE_LOG_P = -1e12
@@ -158,9 +155,6 @@ class Map:
                 [(x_min, y_max), (x_min, y_min)],
             ]
 
-        # Iterate over the obstacles in the map to find the closest distance (if there is one). Remember that the
-        # obstacles are represented as a list of AABBs (Axis-Aligned Bounding Boxes) with the format
-        # (x_min, x_max, y_min, y_max).
         result = None
         origin = np.array(origin)
 
@@ -177,9 +171,6 @@ class Map:
                     result = min(result, dist)
         return result
 
-
-# PID controller class
-######### Your code starts here #########
 
 
 class PIDController:
@@ -258,7 +249,6 @@ class ParticleFilter:
             "/pf_estimate", PoseStamped, queue_size=10
         )
 
-        # Initialize uniformly-distributed particles
         ######### Your code starts here #########
         self._map = map_
         self.n_particles = n_particles
@@ -271,8 +261,6 @@ class ParticleFilter:
         x_min, x_max = map_.map_aabb[0], map_.map_aabb[1]
         y_min, y_max = map_.map_aabb[2], map_.map_aabb[3]
 
-        # Reject positions that fall inside obstacles so no particles start
-        # already dead, which wastes the budget from step 0.
         spawned = 0
         while spawned < n_particles:
             x = uniform(x_min, x_max)
@@ -364,18 +352,13 @@ class ParticleFilter:
                 new_x = particle.x + noisy_dist * math.cos(travel_angle)
                 new_y = particle.y + noisy_dist * math.sin(travel_angle)
 
-                # ---- NEW: Penalize impossible moves ----
                 if self._path_crosses_obstacle(
                     particle.x, particle.y, new_x, new_y
                 ) or self._is_invalid_position(new_x, new_y):
 
-                    # The real robot moved, but this hypothesis hit a wall.
-                    # Heavily penalize this particle so it dies in resampling.
                     particle.log_p = IMPOSSIBLE_LOG_P
                     particle.theta = noisy_theta
 
-                    # You can safely skip updating its coordinates.
-                    # It's virtually dead anyway.
                     continue
                 # ----------------------------------------
 
@@ -386,7 +369,7 @@ class ParticleFilter:
 
     def measure(self, z: float, scan_angle_in_rad: float):
         sigma = math.sqrt(self.measurement_variance)
-        max_range = 10.0  # adjust based on your lidar
+        max_range = 10.0
 
         for particle in self._particles:
             if self._is_invalid_position(particle.x, particle.y):
@@ -401,15 +384,12 @@ class ParticleFilter:
                 particle.log_p = IMPOSSIBLE_LOG_P
                 continue
 
-            # Gaussian likelihood
             gauss = scipy.stats.norm(loc=expected, scale=sigma).pdf(z)
 
-            # Add small uniform component (robustness)
             uniform = 1.0 / max_range
 
             likelihood = 0.9 * gauss + 0.1 * uniform
 
-            # Prevent log(0)
             particle.log_p += math.log(likelihood + 1e-12)
 
     def resample(self):
@@ -423,7 +403,6 @@ class ParticleFilter:
         n_eff = 1.0 / np.sum(weights**2)
         n_threshold = threshold_fraction * self.n_particles
 
-        # --- Always replace dead (wall-hit) particles with random ones ---
         x_min, x_max = self._map.map_aabb[0], self._map.map_aabb[1]
         y_min, y_max = self._map.map_aabb[2], self._map.map_aabb[3]
 
@@ -465,7 +444,6 @@ class ParticleFilter:
         if replaced:
             rospy.loginfo(f"Replaced {replaced} wall-penalized particles with random ones")
 
-        # Recompute weights after replacement
         log_weights = np.array([p.log_p for p in self._particles])
         log_weights -= np.max(log_weights)
         weights = np.exp(log_weights)
@@ -530,13 +508,10 @@ class ParticleFilter:
         self._particles = new_particles
 
     def get_estimate(self) -> Tuple[float, float, float]:
-        # Estimate robot's location using particle weights
         ######### Your code starts here #########
         if not self._particles:
             return 0.0, 0.0, 0.0
 
-        # Subtract max before exp to prevent underflow to 0 (which would make
-        # the sum 0 and produce NaN after normalization).
         log_ps = np.array([p.log_p for p in self._particles])
         log_ps -= np.max(log_ps)
         weights = np.exp(log_ps)
@@ -667,7 +642,6 @@ class Controller:
             visualize_position(...)
             visualize_laserscan_ranges(...)
         """
-        # Robot autonomously explores environment while it localizes itself
         ######### Your code starts here #########
         rate = rospy.Rate(10)
         CONFIDENCE_THRESHOLD = 0.15
@@ -693,9 +667,6 @@ class Controller:
                     rospy.loginfo("Localization complete!")
                     break
 
-                # Reinitialize particles uniformly so the filter tries again
-                # from scratch. The robot has moved, so the new sensor context
-                # gives a fresh chance to land on the true position.
                 rospy.loginfo("Reinitializing particles for next convergence attempt...")
                 x_min, x_max = self._particle_filter._map.map_aabb[0], self._particle_filter._map.map_aabb[1]
                 y_min, y_max = self._particle_filter._map.map_aabb[2], self._particle_filter._map.map_aabb[3]
@@ -740,7 +711,6 @@ class Controller:
         ######### Your code ends here #########
 
     def forward_action(self, distance: float):
-        # Robot moves forward by a set amount during manual control
         ######### Your code starts here #########
         pid_dist = PIDController(
             kP=1.2, kI=0.0, kD=1.5, kS=0.5, u_min=-0.22, u_max=0.22

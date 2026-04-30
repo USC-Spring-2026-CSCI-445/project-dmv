@@ -14,7 +14,6 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from tf.transformations import euler_from_quaternion
 
-# Import your existing implementations
 from lab8_9_starter import (
     Map,
     ParticleFilter,
@@ -44,25 +43,16 @@ class PFRRTController:
         self.current_position: Optional[Dict[str, float]] = None
         self.laserscan: Optional[LaserScan] = None
 
-        # Publishers / subscribers
-        # NOTE: cmd_pub matches lab8_9 robot_ctrl_pub topic
         self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
         self.odom_sub = rospy.Subscriber("/odom", Odometry, self.odom_callback)
         self.scan_sub = rospy.Subscriber("/scan", LaserScan, self.laserscan_callback)
 
-        # Wait until we have initial odom + scan
         while (
             self.current_position is None or self.laserscan is None
         ) and not rospy.is_shutdown():
             rospy.loginfo("Waiting for /odom and /scan...")
             rospy.sleep(0.1)
 
-    # -------------------------------------------------------------------------
-    # Callbacks
-    # NOTE: odom_callback does NOT call move_by. move_by is called exactly once
-    # per complete motion primitive (forward_action / rotate_action), using the
-    # actual measured odometry delta — exactly as lab8_9 does it.
-    # -------------------------------------------------------------------------
     def odom_callback(self, msg: Odometry):
         pose = msg.pose.pose
         orientation = pose.orientation
@@ -78,11 +68,6 @@ class PFRRTController:
     def laserscan_callback(self, msg: LaserScan):
         self.laserscan = msg
 
-    # -------------------------------------------------------------------------
-    # Motion primitives — copied verbatim from lab8_9 Controller
-    # Only change: self.robot_ctrl_pub  →  self.cmd_pub
-    #              self._particle_filter  →  self._pf
-    # -------------------------------------------------------------------------
     def forward_action(self, distance: float):
         pid_dist = PIDController(
             kP=1.2, kI=0.0, kD=1.5, kS=0.5, u_min=-0.22, u_max=0.22
@@ -154,10 +139,6 @@ class PFRRTController:
         self._pf.move_by(0, 0, actual_delta_theta)
         self._pf.visualize_particles()
 
-    # -------------------------------------------------------------------------
-    # Measurement update — copied verbatim from lab8_9 Controller.take_measurements()
-    # Only change: self._particle_filter  →  self._pf
-    # -------------------------------------------------------------------------
     def take_measurements(self):
         if self.laserscan is None:
             return
@@ -184,12 +165,6 @@ class PFRRTController:
         self._pf.resample()
         self._pf.visualize_particles()
         self._pf.visualize_estimate()
-
-    # -------------------------------------------------------------------------
-    # Phase 1 — copied verbatim from lab8_9 Controller.autonomous_exploration()
-    # Only change: self._particle_filter  →  self._pf
-    #              self.robot_ctrl_pub    →  self.cmd_pub
-    # -------------------------------------------------------------------------
 
     def localize_with_pf(self):
         rate = rospy.Rate(10)
@@ -264,9 +239,6 @@ class PFRRTController:
 
         self.cmd_pub.publish(Twist())
 
-    # -------------------------------------------------------------------------
-    # Phase 2 — RRT planning from PF estimate to goal
-    # -------------------------------------------------------------------------
     def plan_with_rrt(self):
         est_x, est_y, _ = self._pf.get_estimate()
         start = {"x": est_x, "y": est_y}
@@ -296,11 +268,6 @@ class PFRRTController:
         self._planner.visualize_plan(self.plan)
         self._planner.visualize_graph(graph)
 
-    # -------------------------------------------------------------------------
-    # Phase 3 — copied verbatim from lab10 ObstacleFreeWaypointController.control_robot()
-    # Only change: self.robot_ctrl_pub  →  self.cmd_pub
-    #              waypoints sourced from self.plan instead of constructor arg
-    # -------------------------------------------------------------------------
     def follow_plan(self):
         if not self.plan:
             rospy.logwarn("[Follow] No plan — skipping.")
@@ -331,10 +298,6 @@ class PFRRTController:
 
             goal = self.plan[current_waypoint_idx]
 
-            # est_x, est_y, est_theta = self._pf.get_estimate()
-            # dx = goal["x"] - est_x
-            # dy = goal["y"] - est_y
-
             dx = goal["x"] - self.current_position["x"]
             dy = goal["y"] - self.current_position["y"]
             distance_error = sqrt(dx**2 + dy**2)
@@ -358,14 +321,12 @@ class PFRRTController:
 
             rate.sleep()
 
-    # -------------------------------------------------------------------------
     def run(self):
         self.localize_with_pf()
         self.plan_with_rrt()
         self.follow_plan()
 
 
-# =============================================================================
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--map_filepath", type=str, required=True)
@@ -385,9 +346,9 @@ if __name__ == "__main__":
     pf = ParticleFilter(
         map_obj,
         n_particles=200,
-        translation_variance=0.003,  # matches lab8_9 main block
-        rotation_variance=0.03,  # matches lab8_9 main block
-        measurement_variance=0.1,  # matches lab8_9 main block
+        translation_variance=0.003,
+        rotation_variance=0.03,
+        measurement_variance=0.1,
     )
     planner = RrtPlanner(obstacles, map_aabb)
     controller = PFRRTController(pf, planner, goal_position)
